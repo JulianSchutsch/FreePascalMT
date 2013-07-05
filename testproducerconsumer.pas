@@ -38,6 +38,10 @@ type TProducerConsumer=class
         procedure Execute;override;
     end;
 
+    var
+    SendThreads            : array of TProducerThread;
+    RecvThreads            : array of TConsumerThread;
+
     procedure LeavingThread;
 
   public
@@ -102,7 +106,18 @@ begin
 end;
 
 destructor TProducerConsumer.Destroy;
+var i : Integer;
 begin
+  for i:=0 to High(SendThreads) do
+  begin
+    SendThreads[i].Free;
+  end;
+  SetLength(SendThreads,0);
+  for i:=0 to High(RecvThreads) do
+  begin
+    RecvThreads[i].Free;
+  end;
+  SetLength(RecvThreads,0);
   FBoundedQueue.Free;
   FCompleteEvent.Done;
   inherited Destroy;
@@ -115,9 +130,7 @@ constructor TProducerConsumer.Create(QueueType        : EQueueType;
                                      PacketEachThread : Cardinal;
                                      Data             : Cardinal);
 
-var SendThreads : array of TProducerThread;
-    RecvThreads : array of TConsumerThread;
-    i           : Integer;
+var i : Integer;
 
 begin
   inherited Create;
@@ -127,14 +140,12 @@ begin
   FSendPacketsEachThread := PacketEachThread;
   FCompleteEvent.Init;
 
-  Writeln('Create Queue');
   case QueueType of
     BoundedQueue:
     begin
       FBoundedQueue:=TDataBoundedQueue.Create(QueueLength);
     end;
   end;
-  Writeln('Create Threads');
   SetLength(SendThreads,Sending);
   for i:=0 to Sending-1 do
   begin

@@ -1,5 +1,5 @@
 program appproducerconsumer;
-uses testproducerconsumer;
+uses heaptrc,{$IFNDEF WINDOWS}cthreads,{$ENDIF}testproducerconsumer;
 
 var test : TProducerConsumer;
 

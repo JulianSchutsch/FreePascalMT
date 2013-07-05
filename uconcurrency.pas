@@ -8,7 +8,7 @@ uses Classes, SysUtils,
   {$IFDEF WINDOWS}
   windows;
   {$ELSE}
-  posix;
+  unix,pthreads;
   {$ENDIF}
 
 type PMutex = ^TMutex;
@@ -16,6 +16,8 @@ type PMutex = ^TMutex;
   private
     {$IFDEF WINDOWS}
     FCriticalSection : CRITICAL_SECTION;
+    {$ELSE}
+    FMutex : pthread_mutex_t;
     {$ENDIF}
   public
     constructor Init;
@@ -41,13 +43,15 @@ type TCondition = object
   private
     {$IFDEF WINDOWS}
     FConditionVariable : TCONDITION_VARIABLE;
+    {$ELSE}
+    FConditionVariable : pthread_cond_t;
     {$ENDIF}
   public
     constructor Init;
     destructor Done;
     procedure Wake;
     procedure WakeAll;
-    procedure Sleep(Mutex: PMutex);
+    procedure Wait(Mutex: PMutex);
   end;
 
 type generic TBoundedQueue<Element> = class
@@ -71,6 +75,10 @@ type TEvent = object
   private
     {$IFDEF WINDOWS}
     FEvent : HANDLE;
+    {$ELSE}
+    FSet   : Boolean;
+    FMutex : TMutex;
+    FCond  : TCondition;
     {$ENDIF}
   public
     procedure SSet;
@@ -84,28 +92,64 @@ implementation
 
 procedure TEvent.Wait;
 begin
+  {$IFDEF WINDOWS}
   WaitForSingleObject(FEvent, INFINITE);
+  {$ELSE}
+  FMutex.Aquire;
+  if FSet then
+  begin
+    FMutex.Release;
+    Exit;
+  end;
+  FCond.Wait(@FMutex);
+  if not FSet then
+  begin
+    Writeln('Not set?');
+  end;
+  FMutex.Release;
+  {$ENDIF}
 end;
 
 procedure TEvent.Reset;
 begin
+  {$IFDEF WINDOWS}
   ResetEvent(FEvent);
+  {$ELSE}
+  FSet:=False;
+  {$ENDIF}
 end;
 
 procedure TEvent.SSet;
 begin
+  {$IFDEF WINDOWS}
   SetEvent(FEvent);
+  {$ELSE}
+  FSet := True;
+  FMutex.Aquire;
+  FCond.WakeAll;
+  FMutex.Release;
+  {$ENDIF}
 end;
 
 constructor TEvent.Init;
 begin
+  {$IFDEF WINDOWS}
   FEvent:=CreateEvent(Nil,True,False,'TEVENT_EVENT'); 
   ResetEvent(FEvent);
+  {$ELSE}
+  FMutex.Init;
+  FCond.Init;
+  {$ENDIF}
 end;
 
 destructor TEvent.Done;
 begin
+  {$IFDEF WINDOWS}
   CloseHandle(FEvent);
+  {$ELSE}
+  FMutex.Done;
+  FCond.Done;
+  {$ENDIF}
 end;
 
 procedure TBoundedQueue.Abort(Thread : TThread);
@@ -129,7 +173,7 @@ begin
 
   while((FWritePosition+1) mod Length(FBuffer) = FReadPosition) do
   begin
-    FReadCondition.Sleep(@FMutex);
+    FReadCondition.Wait(@FMutex);
     if(FAbortThread = Thread) then
     begin
       FAbortThread:=Nil;
@@ -157,7 +201,7 @@ begin
 
   while(FReadPosition = FWritePosition) do
   begin
-    FWrittenCondition.Sleep(@FMutex);
+    FWrittenCondition.Wait(@FMutex);
     if(FAbortThread = Thread) then
     begin
       FAbortThread := Nil;
@@ -193,36 +237,56 @@ begin
   FMutex.Done;
 end;
 
-procedure TCondition.Sleep(Mutex: PMutex);
+procedure TCondition.Wait(Mutex: PMutex);
 begin
+  {$IFDEF WINDOWS}
   SleepConditionVariableCS(@FConditionVariable,@Mutex^.FCriticalSection,INFINITE);
+  {$ELSE}
+  pthread_cond_wait(@FConditionVariable, @Mutex^.FMutex);
+  {$ENDIF}
 end;
 
 procedure TCondition.Wake;
 begin
+  {$IFDEF WINDOWS}
   WakeConditionVariable(@FConditionVariable);
+  {$ELSE}
+  pthread_cond_signal(@FConditionVariable);
+  {$ENDIF}
 end;
 
 procedure TCondition.WakeAll;
 begin
+  {$IFDEF WINDOWS}
   WakeAllConditionVariable(@FConditionVariable);
+  {$ELSE}
+  pthread_cond_broadcast(@FConditionVariable);
+  {$ENDIF}
 end;
 
 constructor TCondition.Init;
 begin
   {$IFDEF WINDOWS}
   InitializeConditionVariable(@FConditionVariable);
+  {$ELSE}
+  pthread_cond_init(@FConditionVariable,Nil);
   {$ENDIF}
 end;
 
 destructor TCondition.Done;
 begin
+  {$IFDEF WINDOWS}
+  {$ELSE}
+  pthread_cond_destroy(@FConditionVariable);
+  {$ENDIF}
 end;
 
 procedure TMutex.Aquire;
 begin
   {$IFDEF WINDOWS}
   EnterCriticalSection(@FCriticalSection);
+  {$ELSE}
+  pthread_mutex_lock(@FMutex);
   {$ENDIF}
 end;
 
@@ -230,15 +294,17 @@ procedure TMutex.Release;
 begin
   {$IFDEF WINDOWS}
   LeaveCriticalSection(@FCriticalSection);
+  {$ELSE}
+  pthread_mutex_unlock(@FMutex);
   {$ENDIF}
 end;
 
 constructor TMutex.Init;
 begin
   {$IFDEF WINDOWS}
-  Writeln('IC');
   InitializeCriticalSection(@FCriticalSection);
-  WRiteln('IC/');
+  {$ELSE}
+  pthread_mutex_init(@FMutex,Nil);
   {$ENDIF}
 end;
 
@@ -246,6 +312,8 @@ destructor TMutex.Done;
 begin
   {$IFDEF WINDOWS}
   DeleteCriticalSection(@FCriticalSection);
+  {$ELSE}
+  pthread_mutex_destroy(@FMutex);
   {$ENDIF}
 end;
 
