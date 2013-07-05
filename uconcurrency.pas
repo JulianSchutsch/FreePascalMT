@@ -15,7 +15,7 @@ type PMutex = ^TMutex;
      TMutex = object
   private
     {$IFDEF WINDOWS}
-    FCriticalSection : LPCRITICAL_SECTION;
+    FCriticalSection : CRITICAL_SECTION;
     {$ENDIF}
   public
     constructor Init;
@@ -38,16 +38,16 @@ procedure WakeAllConditionVariable(ConditionVariable: PCONDITION_VARIABLE) exter
 {$ENDIF}
 
 type TCondition = object
-    private
-      {$IFDEF WINDOWS}
-      FConditionVariable : TCONDITION_VARIABLE;
-      {$ENDIF}
-    public
-      constructor Init;
-      destructor Done;
-      procedure Wake;
-      procedure WakeAll;
-      procedure Sleep(Mutex: PMutex);
+  private
+    {$IFDEF WINDOWS}
+    FConditionVariable : TCONDITION_VARIABLE;
+    {$ENDIF}
+  public
+    constructor Init;
+    destructor Done;
+    procedure Wake;
+    procedure WakeAll;
+    procedure Sleep(Mutex: PMutex);
   end;
 
 type generic TBoundedQueue<Element> = class
@@ -67,7 +67,46 @@ type generic TBoundedQueue<Element> = class
     function Receive(out Data : Element; Thread : TThread):Boolean;
   end;
 
+type TEvent = object
+  private
+    {$IFDEF WINDOWS}
+    FEvent : HANDLE;
+    {$ENDIF}
+  public
+    procedure SSet;
+    procedure Reset;
+    procedure Wait;
+    constructor Init;
+    destructor Done;
+  end;
+
 implementation
+
+procedure TEvent.Wait;
+begin
+  WaitForSingleObject(FEvent, INFINITE);
+end;
+
+procedure TEvent.Reset;
+begin
+  ResetEvent(FEvent);
+end;
+
+procedure TEvent.SSet;
+begin
+  SetEvent(FEvent);
+end;
+
+constructor TEvent.Init;
+begin
+  FEvent:=CreateEvent(Nil,True,False,'TEVENT_EVENT'); 
+  ResetEvent(FEvent);
+end;
+
+destructor TEvent.Done;
+begin
+  CloseHandle(FEvent);
+end;
 
 procedure TBoundedQueue.Abort(Thread : TThread);
 begin
@@ -103,6 +142,7 @@ begin
   FWritePosition := (FWritePosition+1) mod Length(FBuffer);
   FWrittenCondition.Wake;
   FMutex.Release;
+  Exit(True);
 end;
 
 function TBoundedQueue.Receive(out Data : Element; Thread : TThread):Boolean;
@@ -136,9 +176,13 @@ end;
 
 constructor TBoundedQueue.Create(BufferSize : Cardinal);
 begin
+  Writeln('Resize Buffer');
   SetLength(FBuffer,BufferSize);
+  Writeln('Create Mutex');
   FMutex.Init;
+  Writeln('Create Condition');
   FWrittenCondition.Init;
+  Writeln('Create Condition2');
   FReadCondition.Init;
 end;
 
@@ -151,7 +195,7 @@ end;
 
 procedure TCondition.Sleep(Mutex: PMutex);
 begin
-  SleepConditionVariableCS(@FConditionVariable,Mutex^.FCriticalSection,INFINITE);
+  SleepConditionVariableCS(@FConditionVariable,@Mutex^.FCriticalSection,INFINITE);
 end;
 
 procedure TCondition.Wake;
@@ -178,28 +222,30 @@ end;
 procedure TMutex.Aquire;
 begin
   {$IFDEF WINDOWS}
-  EnterCriticalSection(FCriticalSection);
+  EnterCriticalSection(@FCriticalSection);
   {$ENDIF}
 end;
 
 procedure TMutex.Release;
 begin
   {$IFDEF WINDOWS}
-  LeaveCriticalSection(FCriticalSection);
+  LeaveCriticalSection(@FCriticalSection);
   {$ENDIF}
 end;
 
 constructor TMutex.Init;
 begin
   {$IFDEF WINDOWS}
-  InitializeCriticalSection(FCriticalSection);
+  Writeln('IC');
+  InitializeCriticalSection(@FCriticalSection);
+  WRiteln('IC/');
   {$ENDIF}
 end;
 
 destructor TMutex.Done;
 begin
   {$IFDEF WINDOWS}
-  DeleteCriticalSection(FCriticalSection);
+  DeleteCriticalSection(@FCriticalSection);
   {$ENDIF}
 end;
 

@@ -9,18 +9,18 @@ uses
 
 type EQueueType=(BoundedQueue);
 
+type TDataBoundedQueue = specialize TBoundedQueue<Pointer>;
 
 type TProducerConsumer=class
   private
-    type TDataBoundedQueue = specialize TBoundedQueue<Pointer>;
-
     var
     FQueueType    : EQueueType;
     FBoundedQueue : TDataBoundedQueue;
-    FSendPacketEachThread : Cardinal;
-    FTotalReceivedPackets : Cardinal;
-    FTotalPackets         : Cardinal;
-    FActiveThreads        : Cardinal;
+    FSendPacketsEachThread : Cardinal;
+    FTotalReceivedPackets  : Cardinal;
+    FTotalPackets          : Cardinal;
+    FActiveThreads         : Cardinal;
+    FCompleteEvent         : TEvent;
 
     type TProducerThread=class(TThread)
       private
@@ -38,22 +38,27 @@ type TProducerConsumer=class
         procedure Execute;override;
     end;
 
-procedure ASyncComplete(Data:Pointer);
+    procedure LeavingThread;
 
   public
+    procedure Wait;
     constructor Create(QueueType        : EQueueType;
                        QueueLength      : Cardinal;
                        Sending          : Cardinal;
                        Receiving        : Cardinal;
                        PacketEachThread : Cardinal;
                        Data             : Cardinal);
+    destructor Destroy;override;
   end;
 
 implementation
 
-procedure TProducerConsumer.ASyncComplete(Data:Pointer);
+procedure TProducerConsumer.LeavingThread;
 begin
-  Writeln('Complete!');
+  if InterlockedDecrement(FActiveThreads)=0 then
+  begin
+    FCompleteEvent.SSet;
+  end;
 end;
 
 procedure TProducerConsumer.TConsumerThread.Execute;
@@ -69,27 +74,38 @@ begin
       end;
     end;
   end;
-  if(FProducerConsumer.FBoundedQueue.Receive(data,Self)) then
-  begin
-    Writeln('Unexpected data in consumer thread');
-  end;
+  FProducerConsumer.LeavingThread;
 
 end;
 
 procedure TProducerConsumer.TProducerThread.Execute;
 begin
-  FRemainingPackets:=FProducerConsumer.FSendPacketEachThread;
+  FRemainingPackets:=FProducerConsumer.FSendPacketsEachThread;
   while(FRemainingPackets>0) do
   begin
     case FProducerConsumer.FQueueType of
       BoundedQueue:if not FProducerConsumer.FBoundedQueue.Send(Nil,Self) then
-      begin
-        Writeln('Unexpected shutdown in producer thread!');
-        Break;
-      end;
+        begin
+          Writeln('Unexpected shutdown in producer thread!');
+          Break;
+        end;
     end;
     FRemainingPackets:=FRemainingPackets-1;
   end;
+  FProducerConsumer.LeavingThread;
+end;
+
+procedure TProducerConsumer.Wait;
+begin
+  FCompleteEvent.Wait;
+  Writeln('Total Received:',FTotalReceivedPackets);
+end;
+
+destructor TProducerConsumer.Destroy;
+begin
+  FBoundedQueue.Free;
+  FCompleteEvent.Done;
+  inherited Destroy;
 end;
 
 constructor TProducerConsumer.Create(QueueType        : EQueueType;
@@ -104,17 +120,20 @@ var SendThreads : array of TProducerThread;
     i           : Integer;
 
 begin
+  inherited Create;
   FQueueType     := QueueType;
   FTotalPackets  := Sending*PacketEachThread;
   FActiveThreads := Sending+Receiving;
+  FSendPacketsEachThread := PacketEachThread;
+  FCompleteEvent.Init;
 
+  Writeln('Create Queue');
   case QueueType of
     BoundedQueue:
     begin
       FBoundedQueue:=TDataBoundedQueue.Create(QueueLength);
     end;
   end;
-
   Writeln('Create Threads');
   SetLength(SendThreads,Sending);
   for i:=0 to Sending-1 do
