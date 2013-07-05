@@ -5,11 +5,11 @@ var test : TProducerConsumer;
 
 begin
   test:=TProducerConsumer.Create
-    (BoundedQueue,
+    (UnBoundedQueue,
      1024, // Queue length
-     8,    // Sending threads
-     8,    // Receiving threads
-     1000000, // Packets each sending thread
+     4,    // Sending threads
+     4,    // Receiving threads
+     1, // Packets each sending thread
      0);   // Amount of data in bytes
   test.wait;
   test.free;

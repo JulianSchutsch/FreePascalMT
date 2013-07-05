@@ -7,15 +7,17 @@ interface
 uses
   Classes, SysUtils,uconcurrency;
 
-type EQueueType=(BoundedQueue);
+type EQueueType=(BoundedQueue,UnboundedQueue);
 
 type TDataBoundedQueue = specialize TBoundedQueue<Pointer>;
+type TDataUnboundedQueue = specialize TUnboundedQueue<Pointer>;
 
 type TProducerConsumer=class
   private
     var
     FQueueType    : EQueueType;
     FBoundedQueue : TDataBoundedQueue;
+    FUnboundedQueue : TDataUnboundedQueue;
     FSendPacketsEachThread : Cardinal;
     FTotalReceivedPackets  : Cardinal;
     FTotalPackets          : Cardinal;
@@ -32,8 +34,9 @@ type TProducerConsumer=class
 
     type TConsumerThread=class(TThread)
       private
+        FReceived         : Cardinal;
         FProducerConsumer : TProducerConsumer;
-        FReceivedPackets : Cardinal;
+        FReceivedPackets  : Cardinal;
       public
         procedure Execute;override;
     end;
@@ -76,7 +79,13 @@ begin
         Writeln('Unexpected shutdown in consumer thread');
         Break;
       end;
+      UnboundedQueue:if not FProducerConsumer.FUnboundedQueue.Receive(data,Self) then
+      begin
+        Writeln('Unexpected shutdown in consumer thread');
+        break;
+      end;
     end;
+    FReceived:=FReceived+1;
   end;
   FProducerConsumer.LeavingThread;
 
@@ -89,10 +98,11 @@ begin
   begin
     case FProducerConsumer.FQueueType of
       BoundedQueue:if not FProducerConsumer.FBoundedQueue.Send(Nil,Self) then
-        begin
-          Writeln('Unexpected shutdown in producer thread!');
-          Break;
-        end;
+      begin
+        Writeln('Unexpected shutdown in producer thread!');
+        Break;
+      end;
+      UnboundedQueue: FProducerConsumer.FUnboundedQueue.Send(Nil);
     end;
     FRemainingPackets:=FRemainingPackets-1;
   end;
@@ -100,9 +110,15 @@ begin
 end;
 
 procedure TProducerConsumer.Wait;
+var i:Integer;
 begin
   FCompleteEvent.Wait;
   Writeln('Total Received:',FTotalReceivedPackets);
+  for i:=0 to High(RecvThreads) do
+  begin
+    Writeln('Thread ',i,' received ',RecvThreads[i].FReceived);
+  end;
+
 end;
 
 destructor TProducerConsumer.Destroy;
@@ -119,6 +135,7 @@ begin
   end;
   SetLength(RecvThreads,0);
   FBoundedQueue.Free;
+  FUnboundedQueue.Free;
   FCompleteEvent.Done;
   inherited Destroy;
 end;
@@ -144,6 +161,10 @@ begin
     BoundedQueue:
     begin
       FBoundedQueue:=TDataBoundedQueue.Create(QueueLength);
+    end;
+    UnboundedQueue:
+    begin
+      FUnboundedQueue:=TDataUnboundedQueue.Create();
     end;
   end;
   SetLength(SendThreads,Sending);

@@ -4,7 +4,7 @@ unit uconcurrency;
 
 interface
 
-uses Classes, SysUtils,
+uses Classes, SysUtils, uqueue,
   {$IFDEF WINDOWS}
   windows;
   {$ELSE}
@@ -22,7 +22,7 @@ type PMutex = ^TMutex;
   public
     constructor Init;
     destructor Done;
-    procedure Aquire;
+    procedure Acquire;
     procedure Release;
   end;
 
@@ -54,23 +54,6 @@ type TCondition = object
     procedure Wait(Mutex: PMutex);
   end;
 
-type generic TBoundedQueue<Element> = class
-  private
-    FBuffer           : array of Element;
-    FReadPosition     : Cardinal;
-    FWritePosition    : Cardinal;
-    FMutex            : TMutex;
-    FReadCondition    : TCondition;
-    FWrittenCondition : TCondition;
-    FAbortThread      : TThread;    { Not owner }
-  public
-    constructor Create(BufferSize : Cardinal);
-    destructor Destroy;override;
-    procedure Abort(Thread : TThread);
-    function Send(Data : Element; Thread : TThread):Boolean;
-    function Receive(out Data : Element; Thread : TThread):Boolean;
-  end;
-
 type TEvent = object
   private
     {$IFDEF WINDOWS}
@@ -88,74 +71,102 @@ type TEvent = object
     destructor Done;
   end;
 
+type generic TBoundedQueue<Element> = class
+  private
+    FBuffer           : array of Element;
+    FReadPosition     : Cardinal;
+    FWritePosition    : Cardinal;
+    FMutex            : TMutex;
+    FReadCondition    : TCondition;
+    FWrittenCondition : TCondition;
+    FAbortThread      : TThread;    { Not owner }
+  public
+    constructor Create(BufferSize : Cardinal);
+    destructor Destroy;override;
+    procedure Abort(Thread : TThread);
+    function Send(Data : Element; Thread : TThread):Boolean;
+    function Receive(out Data : Element; Thread : TThread):Boolean;
+  end;
+
+type generic TUnboundedQueue<Element> = class
+  private
+    type TQ=specialize TQueue<Element>;
+    var
+    FQueue            : TQ;
+    FMutex            : TMutex;
+    FWrittenCondition : TCondition;
+    FAbortThread      : TThread;  { Not owner}
+  public
+    constructor Create;
+    destructor Destroy;override;
+    procedure Abort(Thread : TThread);
+    procedure Send(Data : Element);
+    function Receive(out Data : Element; Thread: TThread):Boolean;
+  end;
+
 implementation
 
-procedure TEvent.Wait;
+constructor TUnboundedQueue.Create;
 begin
-  {$IFDEF WINDOWS}
-  WaitForSingleObject(FEvent, INFINITE);
-  {$ELSE}
-  FMutex.Aquire;
-  if FSet then
-  begin
-    FMutex.Release;
-    Exit;
-  end;
-  FCond.Wait(@FMutex);
-  if not FSet then
-  begin
-    Writeln('Not set?');
-  end;
-  FMutex.Release;
-  {$ENDIF}
-end;
-
-procedure TEvent.Reset;
-begin
-  {$IFDEF WINDOWS}
-  ResetEvent(FEvent);
-  {$ELSE}
-  FSet:=False;
-  {$ENDIF}
-end;
-
-procedure TEvent.SSet;
-begin
-  {$IFDEF WINDOWS}
-  SetEvent(FEvent);
-  {$ELSE}
-  FSet := True;
-  FMutex.Aquire;
-  FCond.WakeAll;
-  FMutex.Release;
-  {$ENDIF}
-end;
-
-constructor TEvent.Init;
-begin
-  {$IFDEF WINDOWS}
-  FEvent:=CreateEvent(Nil,True,False,'TEVENT_EVENT'); 
-  ResetEvent(FEvent);
-  {$ELSE}
+  inherited Create;
+  FQueue:=TQ.Create;
   FMutex.Init;
-  FCond.Init;
-  {$ENDIF}
+  FWrittenCondition.Init
 end;
 
-destructor TEvent.Done;
+destructor TUnboundedQueue.Destroy;
 begin
-  {$IFDEF WINDOWS}
-  CloseHandle(FEvent);
-  {$ELSE}
   FMutex.Done;
-  FCond.Done;
-  {$ENDIF}
+  FWrittenCondition.Done;
+  FQueue.Free;
+end;
+
+procedure TUnboundedQueue.Abort(Thread : TThread);
+begin
+  FAbortThread := Thread;
+  FMutex.Acquire;
+  FWrittenCondition.WakeAll;
+  FMutex.Release;  
+end;
+
+procedure TUnboundedQueue.Send(Data : Element);
+begin
+  FMutex.Acquire;
+  FQueue.Push(Data);
+  FWrittenCondition.Wake;
+  FMutex.Release;
+end;
+
+function TUnboundedQueue.Receive(out Data : Element; Thread: TThread):Boolean;
+begin
+  FMutex.Acquire;
+  if(FAbortThread = Thread) then
+  begin
+     FAbortThread := Nil;
+     FMutex.Release;
+     Exit(False);
+  end;
+
+  while(FQueue.Empty) do
+  begin
+    FWrittenCondition.Wait(@FMutex);
+    if(FAbortThread = Thread) then
+    begin
+      FAbortThread := Nil;
+      FMutex.Release;
+      Exit(False);
+    end;
+  end;
+
+  Data := FQueue.Pop;
+  FMutex.Release;
+  Exit(True); 
 end;
 
 procedure TBoundedQueue.Abort(Thread : TThread);
 begin
   FAbortThread := Thread;
-  FMutex.Aquire;
+  FMutex.Acquire;
   FReadCondition.WakeAll;
   FWrittenCondition.WakeAll;
   FMutex.Release;
@@ -163,7 +174,7 @@ end;
 
 function TBoundedQueue.Send(Data : Element; Thread : TThread):Boolean;
 begin
-  FMutex.Aquire;
+  FMutex.Acquire;
   if(FAbortThread = Thread) then
   begin
     FAbortThread := Nil;
@@ -191,7 +202,7 @@ end;
 
 function TBoundedQueue.Receive(out Data : Element; Thread : TThread):Boolean;
 begin
-  FMutex.Aquire;
+  FMutex.Acquire;
   if(FAbortThread = Thread) then
   begin
      FAbortThread := Nil;
@@ -281,7 +292,7 @@ begin
   {$ENDIF}
 end;
 
-procedure TMutex.Aquire;
+procedure TMutex.Acquire;
 begin
   {$IFDEF WINDOWS}
   EnterCriticalSection(@FCriticalSection);
@@ -317,5 +328,66 @@ begin
   {$ENDIF}
 end;
 
-end.
+procedure TEvent.Wait;
+begin
+  {$IFDEF WINDOWS}
+  WaitForSingleObject(FEvent, INFINITE);
+  {$ELSE}
+  FMutex.Acquire;
+  if FSet then
+  begin
+    FMutex.Release;
+    Exit;
+  end;
+  FCond.Wait(@FMutex);
+  if not FSet then
+  begin
+    Writeln('Not set?');
+  end;
+  FMutex.Release;
+  {$ENDIF}
+end;
 
+procedure TEvent.Reset;
+begin
+  {$IFDEF WINDOWS}
+  ResetEvent(FEvent);
+  {$ELSE}
+  FSet:=False;
+  {$ENDIF}
+end;
+
+procedure TEvent.SSet;
+begin
+  {$IFDEF WINDOWS}
+  SetEvent(FEvent);
+  {$ELSE}
+  FSet := True;
+  FMutex.Acquire;
+  FCond.WakeAll;
+  FMutex.Release;
+  {$ENDIF}
+end;
+
+constructor TEvent.Init;
+begin
+  {$IFDEF WINDOWS}
+  FEvent:=CreateEvent(Nil,True,False,'TEVENT_EVENT'); 
+  ResetEvent(FEvent);
+  {$ELSE}
+  FMutex.Init;
+  FCond.Init;
+  {$ENDIF}
+end;
+
+destructor TEvent.Done;
+begin
+  {$IFDEF WINDOWS}
+  CloseHandle(FEvent);
+  {$ELSE}
+  FMutex.Done;
+  FCond.Done;
+  {$ENDIF}
+end;
+
+end.
