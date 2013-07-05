@@ -98,6 +98,11 @@ constructor TProducerConsumer.Create(QueueType        : EQueueType;
                                      Receiving        : Cardinal;
                                      PacketEachThread : Cardinal;
                                      Data             : Cardinal);
+
+var SendThreads : array of TProducerThread;
+    RecvThreads : array of TConsumerThread;
+    i           : Integer;
+
 begin
   FQueueType     := QueueType;
   FTotalPackets  := Sending*PacketEachThread;
@@ -110,12 +115,26 @@ begin
     end;
   end;
 
-  for i:=1 to Sending do
+  Writeln('Create Threads');
+  SetLength(SendThreads,Sending);
+  for i:=0 to Sending-1 do
   begin
-    with TConsumerThread.Create(True) do
-    begin
-
-    end;
+    SendThreads[i]:=TProducerThread.Create(True);
+    SendThreads[i].FProducerConsumer:=Self;
+  end;
+  SetLength(RecvThreads,Receiving);
+  for i:=0 to Receiving-1 do
+  begin
+    RecvThreads[i]:=TConsumerThread.Create(True);
+    RecvThreads[i].FProducerConsumer:=Self;
+  end;
+  for i:=0 to Sending-1 do
+  begin
+    SendThreads[i].Start;
+  end;
+  for i:=0 to Receiving-1 do
+  begin
+    RecvThreads[i].Start;
   end;
 
 end;
