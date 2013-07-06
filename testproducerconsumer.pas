@@ -15,14 +15,14 @@ type TDataUnboundedQueue = specialize TUnboundedQueue<Pointer>;
 type TProducerConsumer=class
   private
     var
-    FQueueType    : EQueueType;
-    FBoundedQueue : TDataBoundedQueue;
-    FUnboundedQueue : TDataUnboundedQueue;
+    FQueueType             : EQueueType;
+    FBoundedQueue          : TDataBoundedQueue;
+    FUnboundedQueue        : TDataUnboundedQueue;
     FSendPacketsEachThread : Cardinal;
     FTotalReceivedPackets  : Cardinal;
     FTotalPackets          : Cardinal;
     FActiveThreads         : Cardinal;
-    FCompleteEvent         : TEvent;
+    FCompleteEvent         : PRTLEvent;
 
     type TProducerThread=class(TThread)
       private
@@ -64,7 +64,7 @@ procedure TProducerConsumer.LeavingThread;
 begin
   if InterlockedDecrement(FActiveThreads)=0 then
   begin
-    FCompleteEvent.SSet;
+    RTLEventSetEvent(FCompleteEvent);
   end;
 end;
 
@@ -112,7 +112,7 @@ end;
 procedure TProducerConsumer.Wait;
 var i:Integer;
 begin
-  FCompleteEvent.Wait;
+  RTLEventWaitFor(FCompleteEvent);
   Writeln('Total Received:',FTotalReceivedPackets);
   for i:=0 to High(RecvThreads) do
   begin
@@ -136,7 +136,7 @@ begin
   SetLength(RecvThreads,0);
   FBoundedQueue.Free;
   FUnboundedQueue.Free;
-  FCompleteEvent.Done;
+  RTLEventDestroy(FCompleteEvent);
   inherited Destroy;
 end;
 
@@ -155,7 +155,7 @@ begin
   FTotalPackets  := Sending*PacketEachThread;
   FActiveThreads := Sending+Receiving;
   FSendPacketsEachThread := PacketEachThread;
-  FCompleteEvent.Init;
+  FCompleteEvent := RTLEventCreate; //FCompleteEvent.Init;
 
   case QueueType of
     BoundedQueue:
