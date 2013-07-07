@@ -1,0 +1,304 @@
+\documentclass{beamer}
+\usepackage[utf8]{inputenc}
+\usepackage{color}
+\usepackage{verbatim}
+\title{Multi threading with FreePascal}
+\author{Julian Schutsch}
+\date{13. July 2013}
+\setbeamertemplate{frametitle}
+{
+   \begin{center}
+    \insertframetitle
+   \end{center}
+}
+\useoutertheme{infolines}
+\begin{document}
+\begin{frame}
+\frametitle{Multi threading with FreePascal}
+\begin{itemize}
+ \item Introduction
+ \item What FreePascal offers
+ \item Conditional variables
+ \item Queues
+ \item Example Patterns
+ \item GUI programs
+ \item Warnings
+ \item Thanks
+\end{itemize}
+\end{frame}
+
+\begin{frame}
+\frametitle{Introduction}
+\begin{center}
+Reasons for multi threading
+\end{center}
+\begin{itemize}
+ \item Solving computation heavy problems
+ \item Scalable handling of events (e.g. network)
+ \item Keeping applications responsive
+\end{itemize}
+\end{frame}
+
+\begin{frame}
+\frametitle{Introduction}
+\begin{center}
+FreePascal?
+\end{center}
+\begin{itemize}
+ \item FreePascal (as many others) not made for parallel computation
+ \item RTLs offer some multi threading support
+\end{itemize}
+\vspace{1cm}
+\begin{centering}
+All multi threading will be very low level.\par
+\end{centering}
+\end{frame}
+
+\begin{frame}
+\frametitle{What FreePascal offers}
+\begin{tabular}{l|l|l}
+ \color{green}Threads & \color{green}RTL (system,classes) & \color{green}2 variants\\
+ \color{green}ThreadPools & \color{green}Packages (MTProcs) & \color{green}Ok\\
+ \color{green}Atomic operations & \color{green}RTL (system) & \color{green}Ok\\
+ \color{green}Memory barriers & \color{green}RTL (system) & \color{green}Ok\\
+ \color{green}Events & \color{green}RTL (system) & \color{green}Ok\\
+ \color{orange}Mutex & \color{orange}RTL (system) & \color{orange}Conditional variables\\
+ \color{orange}Spinlock & \color{orange}- & \color{orange}$\to$Atomic operations\\
+ \color{red}Conditional variables & \color{red}- & \color{red}\\
+ \color{red}Semaphores & \color{red}- & \color{red}\\
+ \color{red}Read\&Write locks & \color{red}- & \color{red}\\
+ \color{red}Volatile & \color{red}- &\color{red}Not good\\
+ \color{red}Barrier & \color{red}- &\color{red}\\
+\end{tabular}
+\end{frame}
+
+\begin{frame}
+\frametitle{Conditional variables}
+\begin{center}
+Why?
+\end{center}
+\begin{itemize}
+ \item Combination of events and mutex
+ \item Signaling one or all waiting threads
+ \item Allows easy implementation and proof of queues and events
+ \item But: Windows only has them starting with Vista
+\end{itemize}
+\begin{center}
+Combination with mutex
+\end{center}
+\begin{itemize}
+ \item Critical section (abstraction) not accessible $\Rightarrow$ Reimplement
+\end{itemize}
+\end{frame}
+
+\begin{frame}
+\frametitle{Queues}
+\begin{center}
+ What?
+\end{center}
+\begin{itemize}
+ \item Thread safe, first in$\to$ first out abstract data type
+\end{itemize}
+\begin{center}
+ Why?
+\end{center}
+\begin{itemize}
+ \item Good abstraction for separation of threads responsibilities
+ \item Can be combined with shared memory (ownership)
+ \item Can proof absence of dead locks, if certain rules are followed
+ \item Number of design patterns available
+ \item Several variants for different purposes
+\end{itemize}
+\end{frame}
+
+\begin{frame}
+\frametitle{Unbounded Queue}
+\begin{itemize}
+ \item Queue protected by a lock
+ \item Sending is non blocking
+ \item Receiving is blocking
+ \item Single conditional variable wakes up receiving thread
+\end{itemize}
+\end{frame}
+\begin{frame}
+\frametitle{Bounded Queue}
+\begin{itemize}
+ \item Circular buffer protected by a lock
+ \item Sending is blocking, if buffer is full
+ \item Receiving is blocking
+ \item "Written" Conditional variable wakes up receiving thread
+ \item "Read" Conditional variable wakes up one blocked sending thread
+ \item No memory allocation/release for send/receive
+ \item Possible variation: Broadcast on empty instead of signal on read
+\end{itemize}
+\end{frame}
+
+\begin{frame}
+\frametitle{Example patterns: Producer-Consumer}
+\begin{enumerate}
+ \item Multi sender, Multi receiver $\Rightarrow$ Queue
+ \item Single sender, Single receiver $\Rightarrow$ Non blocking approaches (volatile?)
+ \item Interrupts $\Rightarrow$ Non blocking, protected read
+\end{enumerate}
+\end{frame}
+
+\begin{frame}
+\frametitle{Example patterns: Leader-Follower}
+\begin{itemize}
+ \item Multi threaded processing of events without queuing
+\end{itemize}
+\begin{enumerate}
+ \item Create pool of threads
+ \item Select leader, rest goes to wait
+ \item Leader waits for event
+ \item On event $\Rightarrow$ give up leadership (send signal)
+ \item Once processing is completed, rejoin as follower
+\end{enumerate}
+\end{frame}
+
+\begin{frame}
+\frametitle{Example patterns: Active-Object}
+\begin{itemize}
+ \item Requires futures
+ \item Asynchronous execution of methods in a designated thread
+\end{itemize}
+\end{frame}
+
+\begin{frame}
+\frametitle{GUI}
+\begin{itemize}
+ \item Main loop, waiting for events (not portable)
+ \item GUI should never wait
+ \item Asynchronous calls the best alternative (also not portable)
+ \item Timers are a possible "hack" to implement them
+ \item FreePascal offers synchronize, if main loop supports it
+ \item Many design patterns must be adjusted
+\end{itemize}
+\end{frame}
+
+\begin{frame}
+\frametitle{Asynchronous Future}
+% http://docs.scala-lang.org/sips/pending/futures-promises.html
+\end{frame}
+
+\begin{frame}
+\frametitle{Model-View-Controller}
+\begin{itemize}
+ \item View must access/iterate through model
+ \item What if changes to the model happen in another thread?
+ \item If model is not trivial, either synchronize or copy
+\end{itemize}
+\end{frame}
+
+\begin{frame}[fragile]
+\frametitle{Warnings: Compiler reordering optimizations}
+
+\begin{center}
+Example 1
+\end{center}
+\begin{tabular}{p{5.7cm} p{5.7cm}}
+What you write
+&
+What the compiler understands\\
+\begin{verbatim}
+while x<>0 do;
+\end{verbatim}
+&
+\begin{verbatim}
+if x<>0 then while True do;
+\end{verbatim}
+\end{tabular}
+\begin{center}
+This kind of code could be used in a two phase shutdown.\\
+Could be improved by conditional variables.\\
+Or you are lucky (enough code in the loop?).\\
+\end{center}
+\end{frame}
+
+\begin{frame}[fragile]
+\frametitle{Warnings: Compiler reordering optimizations}
+
+\begin{center}
+Example 2
+\end{center}
+\begin{tabular}{p{5.7cm} p{5.7cm}}
+What you write
+&
+What the compiler understands\\
+\begin{verbatim}
+x:=0;
+while true do
+begin
+  if x=1 then writeln("Ok");
+end;
+\end{verbatim}
+&
+\begin{verbatim}
+x:=0;
+while true do;
+\end{verbatim}
+\end{tabular}
+
+\begin{center}
+I admit, thats at the moment more gcc with -O3.\\
+But are you willing to risk it? Volatile is really missing!
+\end{center}
+\end{frame}
+
+\begin{frame}[fragile]
+\frametitle{Warnings: Out-of-order execution}
+\begin{center}
+Example
+\end{center}
+\begin{tabular}{p{5.7cm} p{5.7cm}}
+What you write
+&
+What might happen\\
+\begin{verbatim}
+x:=1;
+y:=2;
+\end{verbatim}
+&
+\begin{verbatim}
+y:=2;
+x:=1;
+\end{verbatim}
+\end{tabular}
+\begin{center}
+That is a sure way to sabotage many lock free algorithms.\\
+Use FPCs memory barriers (in this case \tt{writebarrier})
+\end{center}
+\end{frame}
+
+\begin{frame}
+\frametitle{Thanks}
+\end{frame}
+
+\end{document}
+
+% Scatter -> Map -> Reduce
+% Blocked Networking
+% > Device driver waiting
+% Separation of GUI and the rest
+
+% Queues : Blocking against Non-Blocking
+%          Bounded vs Non Bounded
+
+% Shared Memory
+%  - Ownership transfer
+
+% Memory barrier issues
+% Memory bandwidth issues
+
+% Distributed design paradigms
+% => Concurrency pattern
+%    http://en.wikipedia.org/wiki/Concurrency_pattern
+
+% Windows Native vs Posix
+%  Semaphores
+%  Mutex
+%  Spinlock
+%  Read/Write Locks
+
+% Blocking, but not dead,
+%  Periodic wakeup, Signaling
