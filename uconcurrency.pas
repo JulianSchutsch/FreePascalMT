@@ -333,6 +333,10 @@ begin
   {$IFDEF WINDOWS}
   WaitForSingleObject(FEvent, INFINITE);
   {$ELSE}
+  if FSet then
+  begin
+    Exit;
+  end;
   FMutex.Acquire;
   if FSet then
   begin
@@ -372,7 +376,7 @@ end;
 constructor TEvent.Init;
 begin
   {$IFDEF WINDOWS}
-  FEvent:=CreateEvent(Nil,True,False,'TEVENT_EVENT'); 
+  FEvent:=CreateEvent(Nil,True,False,'');
   ResetEvent(FEvent);
   {$ELSE}
   FMutex.Init;
@@ -384,6 +388,7 @@ destructor TEvent.Done;
 begin
   {$IFDEF WINDOWS}
   CloseHandle(FEvent);
+  FEvent:=0;
   {$ELSE}
   FMutex.Done;
   FCond.Done;
