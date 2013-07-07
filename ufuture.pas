@@ -7,7 +7,7 @@ uses uconcurrency;
 
 type generic TFuture<Data>=object
   private
-    FEvent : TEvent;
+    FEvent : PRTLEvent;
     FValue : Data;
   public
     function Get:Data;
@@ -20,25 +20,30 @@ implementation
 
 function TFuture.Get:Data;
 begin
-  FEvent.Wait;
-  FEvent.Done;
+  RTLEventWaitFor(FEvent);
+  RTLEventDestroy(FEvent);
+  FEvent:=Nil;
   Exit(FValue);
 end;
 
 procedure TFuture.SSet(Value:Data);
 begin
   FValue:=Value;
-  FEvent.SSet;
+  RTLEventSetEvent(FEvent);
 end;
 
 constructor TFuture.Init;
 begin
-  FEvent.Init;
+  FEvent:=RTLEventCreate;
 end;
 
 destructor TFuture.Done;
 begin
-  FEvent.Done;
+  if FEvent<>Nil then
+  begin
+    RTLEventDestroy(FEvent);
+    FEvent:=Nil;
+  end;
 end;
 
 end.

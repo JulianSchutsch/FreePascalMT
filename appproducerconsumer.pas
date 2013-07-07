@@ -9,7 +9,7 @@ begin
      1024, // Queue length
      4,    // Sending threads
      4,    // Receiving threads
-     1000000, // Packets each sending thread
+     100000, // Packets each sending thread
      0);   // Amount of data in bytes
   test.wait;
   test.free;

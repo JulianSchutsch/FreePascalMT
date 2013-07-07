@@ -3,7 +3,7 @@ unit testactiveobject;
 {$mode objfpc}{$H+}
 
 interface
-uses uconcurrency, ufuture,classes;
+uses uconcurrency, ufuture,classes,sysutils;
 
 type TIntegerFuture = specialize TFuture<Integer>;
 type TStringFuture  = specialize TFuture<String>;
@@ -12,24 +12,35 @@ type PStringFuture = ^TStringFuture;
 
 type TExampleActive=class(TThread)
   private
+    // Internal data structure to describe a request
     type TActivationEntry=record
       case Id: Integer of
         1:(Fut1 : PIntegerFuture);
         2:(Fut2 : PStringFuture);
       end;
+    // Queue holding any number of requests, no send synchronisation required
     type TActivationQueue=specialize TUnboundedQueue<TActivationEntry>;
     var
     FQueue         : TActivationQueue;
-    FTerminatedAck : TEvent;
+    FTerminatedAck : PRTLEvent;
     FTerminated    : Boolean;
+
+    // Actual functions executed in the thread
     function i_1():Integer;
     function i_2():String;
+
     public
+
+    // Thread main
     procedure Execute;override;
+
+    // Proxy functions for i_1 and i_2
     procedure proxy_1(Res:PIntegerFuture);
     procedure proxy_2(Res:PStringFuture);
+
     constructor Create;
     destructor Destroy;override;
+
   end;
 
 implementation
@@ -51,18 +62,21 @@ begin
   begin
     if FQueue.Receive(Entry,Self) then
     begin
+      // Manual dispatching
       case Entry.Id of
         1:Entry.Fut1^.SSet(i_1);
         2:Entry.Fut2^.SSet(i_2);
       end;
     end;
+    Sleep(1000); // Waste some time, just for demonstration
   end;
-  FTerminatedAck.SSet;
+  RTLEventSetEvent(FTerminatedAck);
 end;
 
 procedure TExampleActive.proxy_1(Res:PIntegerFuture);
 var Entry:TActivationEntry;
 begin
+  // Initialize future and send request for i_1
   Res^.Init;
   Entry.Id   := 1;
   Entry.Fut1 := Res;
@@ -72,6 +86,7 @@ end;
 procedure TExampleActive.proxy_2(Res:PStringFuture);
 var Entry:TActivationEntry;
 begin
+  // Initialize future and send request for i_2
   Res^.Init;
   Entry.Id   := 2;
   Entry.Fut2 := Res;
@@ -80,17 +95,19 @@ end;
 
 constructor TExampleActive.Create;
 begin
-  FTerminatedAck.Init;
+  FTerminatedAck:=RTLEventCreate;
   FQueue:=TActivationQueue.Create;
   inherited Create(False);
 end;
 
 destructor TExampleActive.Destroy;
 begin
+  // Shutdown thread, it is possible that its currently waiting in FQueue, therefore abort that
   FTerminated:=True;
   FQueue.Abort(Self);
-  FTerminatedAck.Wait;
-  FTerminatedAck.Done;
+  // Wait to ensure FQueue is not required anymore
+  RTLEventWaitFor(FTerminatedAck);
+  RTLEventDestroy(FTerminatedAck);
   FQueue.Free;
   inherited Destroy;
 end;

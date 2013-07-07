@@ -4,8 +4,7 @@ unit testproducerconsumer;
 
 interface
 
-uses
-  Classes, SysUtils,uconcurrency;
+uses Classes, SysUtils,uconcurrency;
 
 type EQueueType=(BoundedQueue,UnboundedQueue);
 

@@ -54,23 +54,6 @@ type TCondition = object
     procedure Wait(Mutex: PMutex);
   end;
 
-type TEvent = object
-  private
-    {$IFDEF WINDOWS}
-    FEvent : HANDLE;
-    {$ELSE}
-    FSet   : Boolean;
-    FMutex : TMutex;
-    FCond  : TCondition;
-    {$ENDIF}
-  public
-    procedure SSet;
-    procedure Reset;
-    procedure Wait;
-    constructor Init;
-    destructor Done;
-  end;
-
 type generic TBoundedQueue<Element> = class
   private
     FBuffer           : array of Element;
@@ -325,73 +308,6 @@ begin
   DeleteCriticalSection(@FCriticalSection);
   {$ELSE}
   pthread_mutex_destroy(@FMutex);
-  {$ENDIF}
-end;
-
-procedure TEvent.Wait;
-begin
-  {$IFDEF WINDOWS}
-  WaitForSingleObject(FEvent, INFINITE);
-  {$ELSE}
-  if FSet then
-  begin
-    Exit;
-  end;
-  FMutex.Acquire;
-  if FSet then
-  begin
-    FMutex.Release;
-    Exit;
-  end;
-  FCond.Wait(@FMutex);
-  if not FSet then
-  begin
-    Writeln('Not set?');
-  end;
-  FMutex.Release;
-  {$ENDIF}
-end;
-
-procedure TEvent.Reset;
-begin
-  {$IFDEF WINDOWS}
-  ResetEvent(FEvent);
-  {$ELSE}
-  FSet:=False;
-  {$ENDIF}
-end;
-
-procedure TEvent.SSet;
-begin
-  {$IFDEF WINDOWS}
-  SetEvent(FEvent);
-  {$ELSE}
-  FSet := True;
-  FMutex.Acquire;
-  FCond.WakeAll;
-  FMutex.Release;
-  {$ENDIF}
-end;
-
-constructor TEvent.Init;
-begin
-  {$IFDEF WINDOWS}
-  FEvent:=CreateEvent(Nil,True,False,'');
-  ResetEvent(FEvent);
-  {$ELSE}
-  FMutex.Init;
-  FCond.Init;
-  {$ENDIF}
-end;
-
-destructor TEvent.Done;
-begin
-  {$IFDEF WINDOWS}
-  CloseHandle(FEvent);
-  FEvent:=0;
-  {$ELSE}
-  FMutex.Done;
-  FCond.Done;
   {$ENDIF}
 end;
 
