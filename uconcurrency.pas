@@ -1,16 +1,35 @@
+//-----------------------------------------------------------------------------
+//   Copyright 2013 Julian Schutsch
+//
+//   This file is part of FreePascalMT
+//
+//   ParallelSim is free software: you can redistribute it and/or modify
+//   it under the terms of the GNU Affero General Public License as published
+//   by the Free Software Foundation, either version 3 of the License, or
+//   (at your option) any later version.
+//
+//   FreePascalMT is distributed in the hope that it will be useful,
+//   but WITHOUT ANY WARRANTY; without even the implied warranty of
+//   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+//   GNU Affero General Public License for more details.
+//
+//   You should have received a copy of the GNU Affero General Public License
+//   along with FreePascalMT.  If not, see <http://www.gnu.org/licenses/>.
+//-----------------------------------------------------------------------------
 unit uconcurrency;
-
 {$mode objfpc}{$H+}
-
 interface
 
 uses Classes, SysUtils, uqueue,
+
   {$IFDEF WINDOWS}
   windows;
   {$ELSE}
   unix,pthreads;
   {$ENDIF}
 
+// Mutex reimplementation (see critical section in system(rtl))
+// Required for combination with conditional variables
 type PMutex = ^TMutex;
      TMutex = object
   private
@@ -26,6 +45,7 @@ type PMutex = ^TMutex;
     procedure Release;
   end;
 
+// Header section for conditional variables on windows
 {$IFDEF WINDOWS}
 { Only windows Vista and later supports this! }
 type PCONDITION_VARIABLE=^TCONDITION_VARIABLE;
@@ -54,6 +74,8 @@ type TCondition = object
     procedure Wait(Mutex: PMutex);
   end;
 
+// Ringbuffer based Bounded Queue.
+// Blocking send, Blocking receive
 type generic TBoundedQueue<Element> = class
   private
     FBuffer           : array of Element;
@@ -62,15 +84,22 @@ type generic TBoundedQueue<Element> = class
     FMutex            : TMutex;
     FReadCondition    : TCondition;
     FWrittenCondition : TCondition;
+	FAbortMutex       : TMutex;
+	FAbortCondition   : TCondition;
     FAbortThread      : TThread;    { Not owner }
   public
     constructor Create(BufferSize : Cardinal);
     destructor Destroy;override;
+	// Wake up a specific waiting thread (either sending or receiving)
     procedure Abort(Thread : TThread);
+	// Send Data, returns true on success and false on abort
     function Send(Data : Element; Thread : TThread):Boolean;
+	// Receive data, returns true on success and false on abort
     function Receive(out Data : Element; Thread : TThread):Boolean;
   end;
 
+// Queue based unbounded queue.
+// Non blocking send, blocking receive.
 type generic TUnboundedQueue<Element> = class
   private
     type TQ=specialize TQueue<Element>;
@@ -78,12 +107,17 @@ type generic TUnboundedQueue<Element> = class
     FQueue            : TQ;
     FMutex            : TMutex;
     FWrittenCondition : TCondition;
+	FAbortCondition   : TCondition;
+	FAbortMutex       : TMutex;
     FAbortThread      : TThread;  { Not owner}
   public
     constructor Create;
     destructor Destroy;override;
+	// Wake up a specific waiting thread (receiving)
     procedure Abort(Thread : TThread);
+	// Send data
     procedure Send(Data : Element);
+	// Receive data, returns true on success and false on abort
     function Receive(out Data : Element; Thread: TThread):Boolean;
   end;
 
@@ -94,11 +128,15 @@ begin
   inherited Create;
   FQueue:=TQ.Create;
   FMutex.Init;
-  FWrittenCondition.Init
+  FWrittenCondition.Init;
+  FAbortMutex.Init;
+  FAbortCondition.Init;
 end;
 
 destructor TUnboundedQueue.Destroy;
 begin
+  FAbortMutex.Done;
+  FAbortCondition.Done;
   FMutex.Done;
   FWrittenCondition.Done;
   FQueue.Free;
@@ -106,10 +144,12 @@ end;
 
 procedure TUnboundedQueue.Abort(Thread : TThread);
 begin
+  FAbortMutex.Acquire;
   FAbortThread := Thread;
   FMutex.Acquire;
   FWrittenCondition.WakeAll;
-  FMutex.Release;  
+  FMutex.Release;
+  FAbortMutex.Release;
 end;
 
 procedure TUnboundedQueue.Send(Data : Element);
@@ -122,62 +162,88 @@ end;
 
 function TUnboundedQueue.Receive(out Data : Element; Thread: TThread):Boolean;
 begin
+  // The entire procedure is covered by a lock
+  // and only released for waiting or leaving
+  // Abort can only be set with released lock!
   FMutex.Acquire;
+  // Test if the thread has been aborted
   if(FAbortThread = Thread) then
   begin
      FAbortThread := Nil;
+	 FAbortCondition.Wake;
      FMutex.Release;
      Exit(False);
   end;
-
+  // Check if something is in the queue
   while(FQueue.Empty) do
   begin
     FWrittenCondition.Wait(@FMutex);
+	// Abort can be set here, test
     if(FAbortThread = Thread) then
     begin
       FAbortThread := Nil;
+	  FAbortCondition.Wake;
       FMutex.Release;
       Exit(False);
     end;
   end;
-
+  // Get element from queue
   Data := FQueue.Pop;
   FMutex.Release;
+  // Successfull receive
   Exit(True); 
 end;
 
 procedure TBoundedQueue.Abort(Thread : TThread);
 begin
+  // Only one abort at the same time please
+  FAbortMutex.Acquire;
+  // Set current thread to abort
   FAbortThread := Thread;
+  // Make sure, abort is only possible at certain points within or outside a receive/send
   FMutex.Acquire;
+  // Wake all waiting threads
   FReadCondition.WakeAll;
   FWrittenCondition.WakeAll;
+  // Wait for abort to be accepted
+  FAbortCondition.Wait(@FMutex);
+  // Get out of the locks
   FMutex.Release;
+  FAbortMutex.Release;
 end;
 
 function TBoundedQueue.Send(Data : Element; Thread : TThread):Boolean;
 begin
+  // The entire procedure is covered by a lock
+  // and only released for waiting or leaving
+  // Abort can only be set with released lock!
   FMutex.Acquire;
+  // Test for abort
   if(FAbortThread = Thread) then
   begin
     FAbortThread := Nil;
+	FAbortCondition.Wake;
     FMutex.Release;
     Exit(False);
   end;
 
+  // Any space left in the ring buffer?
   while((FWritePosition+1) mod Length(FBuffer) = FReadPosition) do
   begin
     FReadCondition.Wait(@FMutex);
     if(FAbortThread = Thread) then
     begin
       FAbortThread:=Nil;
+	  FAbortCondition.Wake;
       FMutex.Release;
       Exit(False);
     end;
   end;
 
+  // Write to ring buffer and update write position
   FBuffer[FWritePosition] := Data;
   FWritePosition := (FWritePosition+1) mod Length(FBuffer);
+  // Signal that something has been written
   FWrittenCondition.Wake;
   FMutex.Release;
   Exit(True);
@@ -189,6 +255,7 @@ begin
   if(FAbortThread = Thread) then
   begin
      FAbortThread := Nil;
+	 FAbortCondition.Wake;
      FMutex.Release;
      Exit(False);
   end;
@@ -199,6 +266,7 @@ begin
     if(FAbortThread = Thread) then
     begin
       FAbortThread := Nil;
+	  FAbortCondition.Wake;
       FMutex.Release;
       Exit(False);
     end;
@@ -214,20 +282,20 @@ end;
 
 constructor TBoundedQueue.Create(BufferSize : Cardinal);
 begin
-  Writeln('Resize Buffer');
   SetLength(FBuffer,BufferSize);
-  Writeln('Create Mutex');
   FMutex.Init;
-  Writeln('Create Condition');
   FWrittenCondition.Init;
-  Writeln('Create Condition2');
   FReadCondition.Init;
+  FAbortMutex.Init;
+  FAbortCondition.Init;
 end;
 
 destructor TBoundedQueue.Destroy;
 begin
   FReadCondition.Done;
   FWrittenCondition.Done;
+  FAbortCondition.Done;
+  FAbortMutex.Done;
   FMutex.Done;
 end;
 

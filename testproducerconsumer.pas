@@ -1,7 +1,23 @@
+//-----------------------------------------------------------------------------
+//   Copyright 2013 Julian Schutsch
+//
+//   This file is part of FreePascalMT
+//
+//   ParallelSim is free software: you can redistribute it and/or modify
+//   it under the terms of the GNU Affero General Public License as published
+//   by the Free Software Foundation, either version 3 of the License, or
+//   (at your option) any later version.
+//
+//   FreePascalMT is distributed in the hope that it will be useful,
+//   but WITHOUT ANY WARRANTY; without even the implied warranty of
+//   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+//   GNU Affero General Public License for more details.
+//
+//   You should have received a copy of the GNU Affero General Public License
+//   along with FreePascalMT.  If not, see <http://www.gnu.org/licenses/>.
+//-----------------------------------------------------------------------------
 unit testproducerconsumer;
-
 {$mode objfpc}{$H+}
-
 interface
 
 uses Classes, SysUtils,uconcurrency;
@@ -11,6 +27,9 @@ type EQueueType=(BoundedQueue,UnboundedQueue);
 type TDataBoundedQueue = specialize TBoundedQueue<Pointer>;
 type TDataUnboundedQueue = specialize TUnboundedQueue<Pointer>;
 
+// Producer consumer is based on either bounded or unbounded queue,
+// sending a number of messages from the source (producer) to the
+// sink (consumer). There may be any number of producers and consumers.
 type TProducerConsumer=class
   private
     var
@@ -48,6 +67,9 @@ type TProducerConsumer=class
 
   public
     procedure Wait;
+	// Create a producer/consumer system with
+	// a fixed number of producers (sending) and
+	// consumers (receiving)
     constructor Create(QueueType        : EQueueType;
                        QueueLength      : Cardinal;
                        Sending          : Cardinal;
@@ -59,6 +81,7 @@ type TProducerConsumer=class
 
 implementation
 
+// Notify waiting thread, once all producers and consumers are finished.
 procedure TProducerConsumer.LeavingThread;
 begin
   if InterlockedDecrement(FActiveThreads)=0 then
@@ -70,6 +93,7 @@ end;
 procedure TProducerConsumer.TConsumerThread.Execute;
 var data: Pointer;
 begin
+  // Receive data until there is no more expected
   while InterlockedIncrement(FProducerConsumer.FTotalReceivedPackets)<=FProducerConsumer.FTotalPackets do
   begin
     case FProducerConsumer.FQueueType of
@@ -86,12 +110,14 @@ begin
     end;
     FReceived:=FReceived+1;
   end;
+  // Notify waiting thread
   FProducerConsumer.LeavingThread;
 
 end;
 
 procedure TProducerConsumer.TProducerThread.Execute;
 begin
+  // Send a fixed number of packets/producer
   FRemainingPackets:=FProducerConsumer.FSendPacketsEachThread;
   while(FRemainingPackets>0) do
   begin
@@ -105,12 +131,14 @@ begin
     end;
     FRemainingPackets:=FRemainingPackets-1;
   end;
+  // Notify waiting thread
   FProducerConsumer.LeavingThread;
 end;
 
 procedure TProducerConsumer.Wait;
 var i:Integer;
 begin
+  // Wait for all producer and consumer threads to shut down
   RTLEventWaitFor(FCompleteEvent);
   Writeln('Total Received:',FTotalReceivedPackets);
   for i:=0 to High(RecvThreads) do

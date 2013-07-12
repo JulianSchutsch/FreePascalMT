@@ -16,19 +16,28 @@
 //   You should have received a copy of the GNU Affero General Public License
 //   along with FreePascalMT.  If not, see <http://www.gnu.org/licenses/>.
 //-----------------------------------------------------------------------------
-program appproducerconsumer;
-uses heaptrc,{$IFNDEF WINDOWS}cthreads,{$ENDIF}testproducerconsumer;
 
-var test : TProducerConsumer;
+// Demonstration of the main thread synchronization
+
+program appmainthread;
+{$mode objfpc}{$H+}
+
+uses heaptrc,{$IFDEF UNIX}cthreads,{$ENDIF}testmainthread;
+
+var SyncThread:TSyncThread;
 
 begin
-  test:=TProducerConsumer.Create
-    (UnBoundedQueue,
-     1024, // Queue length
-     4,    // Sending threads
-     4,    // Receiving threads
-     100000, // Packets each sending thread
-     0);   // Amount of data in bytes
-  test.wait;
-  test.free;
+
+  // SyncThread will try to execute a method in the main thread
+  // which is catched and executed by WaitMainThread
+  // WakeMainThread is a "wait for event" wrapper for CheckSynchronize in
+  // classes(RTL).
+  SyncThread:=TSyncThread.Create;
+
+  while(not SyncThread.SyncCalled) do
+  begin
+    WaitMainThread;
+  end;
+  SyncThread.Free;
+
 end.
